@@ -2,7 +2,16 @@ CFLAGS += -Wall -Wextra -std=c17 -pedantic
 CXXFLAGS += -Wall -Wextra -std=c++20 -pedantic
 CPPFLAGS += -Ilibcuefile/include -D_XOPEN_SOURCE=500 -D_BSD_SOURCE -D_DEFAULT_SOURCE
 LDFLAGS += -L/usr/local/lib
-LIBS += -lFLAC -lFLAC++ -lboost_program_options -lboost_stacktrace_basic -licuuc -lsndfile
+LIBS += -lFLAC++ -lboost_program_options -lboost_stacktrace_basic -licuuc -lsndfile -lFLAC -logg -lvorbis -lvorbisenc -lvorbisfile
+LIBS_DYNAMIC += -lopus -lmp3lame -lid3tag -lmpg123
+
+STATIC ?= 0
+ifeq ($(STATIC),1)
+LDFLAGS += -static
+LINK_LIBS = $(LIBS) -Wl,-Bdynamic $(LIBS_DYNAMIC) -Wl,-Bstatic
+else
+LINK_LIBS = $(LIBS) $(LIBS_DYNAMIC)
+endif
 
 #CFLAGS += -g -O0
 #CXXFLAGS += -g -O0
@@ -14,6 +23,7 @@ OBJS = \
 	gain_analysis.o \
 	main.o \
 	replaygain_writer.o \
+	resample.o \
 	sanitize.o \
 	transcode.o \
 	libcuefile.a \
@@ -29,7 +39,7 @@ libcuefile.a: recursive-all
 	ln -sf libcuefile/src/libcuefile.a
 
 flacsplit: $(OBJS)
-	$(CXX) $(LDFLAGS) $^ $(LIBS) -o $@
+	$(CXX) $(LDFLAGS) $^ $(LINK_LIBS) -o $@
 
 decode.o: decode.cpp \
 	decode.hpp \
@@ -62,6 +72,10 @@ main.o: main.cpp \
 
 replaygain_writer.o: replaygain_writer.cpp \
 	replaygain_writer.hpp
+
+resample.o: resample.cpp \
+	resample.hpp \
+	transcode.hpp
 
 sanitize.o: sanitize.cpp \
 	sanitize.hpp
