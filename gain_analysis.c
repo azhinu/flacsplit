@@ -66,7 +66,7 @@
 //const double RMS_PERCENTILE =	0.95;
 const double RMS_DIVISOR = 20;
 /* maximum allowed sample frequency [Hz] */
-#define MAX_SAMP_FREQ		48000
+#define MAX_SAMP_FREQ		192000
 /* Time slice size [s] */
 #define RMS_WINDOW_TIME_NUM	1
 #define RMS_WINDOW_TIME_DEN	20
@@ -276,6 +276,10 @@ replaygain_reset_frequency(struct replaygain_ctx *ctx, unsigned long freq) {
 	memset(ctx->routbuf, 0, sizeof(Float_t) * MAX_ORDER);
 
 	switch (freq) {
+	case 192000L: ctx->freqindex = 0; break; /* use 48kHz filter */
+	case 176400L: ctx->freqindex = 1; break; /* use 44.1kHz filter */
+	case 96000L: ctx->freqindex = 0; break;  /* use 48kHz filter */
+	case 88200L: ctx->freqindex = 1; break;  /* use 44.1kHz filter */
 	case 48000L: ctx->freqindex = 0; break;
 	case 44100L: ctx->freqindex = 1; break;
 	case 32000L: ctx->freqindex = 2; break;

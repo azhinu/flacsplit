@@ -41,6 +41,7 @@
 #include "errors.hpp"
 #include "gain_analysis.hpp"
 #include "replaygain_writer.hpp"
+#include "resample.hpp"
 #include "sanitize.hpp"
 #include "transcode.hpp"
 
@@ -108,6 +109,7 @@ struct options {
 	bool	hidden_track;
 	bool	switch_index;
 	bool	use_flac;
+	int32_t	resample_rate;
 };
 
 template <typename In>
@@ -509,6 +511,7 @@ once(const std::filesystem::path &cue_path, const struct options *options) {
 		}
 
 		std::shared_ptr<Encoder> encoder;
+		std::unique_ptr<Resampler> resampler;
 
 		// transcode
 		int64_t samples = 0;
@@ -523,6 +526,26 @@ once(const std::filesystem::path &cue_path, const struct options *options) {
 			// with FLAC, stream properties like the sample rate
 			// aren't known until after the first seek/process
 			if (!track_samples) {
+				int32_t output_rate = frame.rate;
+				
+				// Setup resampler if requested
+				if (options->resample_rate > 0 &&
+				    options->resample_rate != frame.rate) {
+					if (options->resample_rate > frame.rate) {
+						std::cerr << prog
+						    << ": warning: cannot upsample from "
+						    << frame.rate << " to "
+						    << options->resample_rate
+						    << ", keeping original rate\n";
+					} else {
+						resampler.reset(new Resampler(
+						    frame.rate,
+						    options->resample_rate,
+						    frame.channels));
+						output_rate = options->resample_rate;
+					}
+				}
+				
 				double		samples;
 				if (offset.end) {
 					int64_t frames = offset.end - offset.begin;
@@ -541,6 +564,12 @@ once(const std::filesystem::path &cue_path, const struct options *options) {
 					samples = decoder->total_samples() -
 					    begin_sample;
 				}
+				
+				// Adjust track_samples if resampling
+				if (resampler) {
+					samples = samples * output_rate / frame.rate;
+				}
+				
 				track_samples = static_cast<int64_t>(
 				    samples + .5);
 
@@ -548,34 +577,44 @@ once(const std::filesystem::path &cue_path, const struct options *options) {
 				    out_file,
 				    *track_info[i],
 				    track_samples,
-				    frame.rate
+				    output_rate
 				));
 
 				rg_analyzer.reset(new replaygain::Analyzer(
-				    decoder->sample_rate()));
+				    output_rate));
 			}
 
 			int64_t remaining = track_samples - samples;
 			if (remaining < frame.samples)
 				frame.samples = remaining;
 			samples += frame.samples;
+			
+			// Apply resampling if configured
+			Frame *output_frame = &frame;
+			Frame resampled_frame;
+			if (resampler) {
+				resampled_frame = resampler->resample(frame);
+				output_frame = &resampled_frame;
+				// Update sample count for resampled data
+				samples = samples - frame.samples + resampled_frame.samples;
+			}
 
-			if (frame.samples > dimens[0] ||
-			    frame.channels > dimens[1]) {
+			if (output_frame->samples > dimens[0] ||
+			    output_frame->channels > dimens[1]) {
 				// reset the buffer for conversion to double
-				dimens[0] = frame.samples;
-				dimens[1] = frame.channels;
-				rg_samples.reset(new double[frame.samples *
-				    frame.channels]);
+				dimens[0] = output_frame->samples;
+				dimens[1] = output_frame->channels;
+				rg_samples.reset(new double[output_frame->samples *
+				    output_frame->channels]);
 				double_samples[0] = rg_samples.get();
 				double_samples[1] = double_samples[0] +
-				    frame.samples;
+				    output_frame->samples;
 			}
-			transform_sample_fmt(frame, double_samples);
+			transform_sample_fmt(*output_frame, double_samples);
 			rg_analyzer->add(double_samples[0], double_samples[1],
-			    frame.samples, frame.channels);
+			    output_frame->samples, output_frame->channels);
 
-			encoder->add_frame(frame);
+			encoder->add_frame(*output_frame);
 		} while (samples < track_samples);
 
 		replaygain::Sample rg_sample;
@@ -659,6 +698,9 @@ main(int argc, char **argv) {
 	    ("switch_index,i", "use INDEX 00 for splitting instead of 01 "
 		"(most CD players seek to INDEX 01 instead of INDEX 00 if "
 		"available, but some CDs don't play by those rules)")
+	    ("resample,r", po::value<int32_t>(),
+		"resample to specified rate (e.g., 48000, 44100); "
+		"only downsampling supported")
 	    ;
 
 	po::options_description hidden_desc;
@@ -718,7 +760,20 @@ main(int argc, char **argv) {
 	bool switch_index = !var_map["switch_index"].empty();
 	bool use_flac = !var_map["use_flac"].empty();
 
-	options opts = {out_dir, hidden_track, switch_index, use_flac};
+	int32_t resample_rate = 0;
+	{
+		const po::variable_value &opt = var_map["resample"];
+		if (!opt.empty()) {
+			resample_rate = opt.as<int32_t>();
+			if (resample_rate <= 0) {
+				std::cerr << prog
+				    << ": invalid resample rate\n";
+				return 1;
+			}
+		}
+	}
+
+	options opts = {out_dir, hidden_track, switch_index, use_flac, resample_rate};
 
 	for (auto &cuefile : cuefiles) {
 		try {
