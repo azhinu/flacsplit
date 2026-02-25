@@ -1,0 +1,86 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for manual release (e.g., v1.0.0)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    
+    steps:
+      - name: Install dependencies
+        run: |
+          apk add --no-cache \
+            boost-dev \
+            boost-static \
+            byacc \
+            cmake \
+            flac-dev \
+            flac-static \
+            flex \
+            g++ \
+            git \
+            icu-dev \
+            icu-static \
+            lame-dev \
+            libid3tag-dev \
+            libogg-dev \
+            libsndfile-dev \
+            libsndfile-static \
+            libvorbis-dev \
+            libvorbis-static \
+            libogg-static \
+            make \
+            mpg123-dev \
+            opus-dev
+      
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Build static binary
+        run: make STATIC=1
+      
+      - name: Prepare artifact
+        run: |
+          tar -czf flacsplit-linux-musl-static-x86_64.tar.gz flacsplit
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flacsplit-linux-musl-x86_64
+          path: flacsplit-linux-musl-x86_64.tar.gz
+      
+      - name: Determine release tag
+        id: release_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag_name }}" ]; then
+            echo "tag=${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=manual-build-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.tag_name != '')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: Release ${{ steps.release_tag.outputs.tag }}
+          draft: true
+          prerelease: false
+          files: flacsplit-linux-musl-x86_64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
