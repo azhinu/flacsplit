@@ -50,11 +50,12 @@ jobs:
           submodules: recursive
       
       - name: Build static binary
-        run: make STATIC=1
+        run: | 
+          make STATIC=1 CMAKE_POLICY_VERSION_MINIMUM=3.5
       
       - name: Prepare artifact
         run: |
-          tar -czf flacsplit-linux-musl-static-x86_64.tar.gz flacsplit
+          tar -czf flacsplit-linux-musl-x86_64.tar.gz flacsplit
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
